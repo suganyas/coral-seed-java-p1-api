@@ -1,0 +1,10 @@
+template: external-service
+deployments:
+  dev:
+    target: dev
+    clusters: 1
+    values:
+      image: <registryhost>/<owner>/<repository>
+      fqdn: newapp.contoso.com
+      port: 5000
+      replicas: 2

@@ -1,0 +1,18 @@
+// See https://code.visualstudio.com/docs/editor/debugging 
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Launch Java Program",
+      "request": "launch",
+      "mainClass": "",
+      "serverReadyAction": {
+        "pattern": "initialized with port\\(s\\): ([0-9]+)",
+        "uriFormat": "http://localhost:%s",
+        "action": "openExternally"
+      }
+    }
+  ],
+  "compounds": []
+}
