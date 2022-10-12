@@ -1,4 +1,4 @@
-template: external-service
+template: istio-service
 deployments:
   dev:
     target: dev
