@@ -4,7 +4,7 @@ deployments:
     target: dev
     clusters: 1
     values:
-      image: ghcr.io/erikschlegel/coral-java-api-bigbang-test
+      image: <registryhost>/<owner>/<repository>
       tag: main
       port: 5000
       replicas: 1
