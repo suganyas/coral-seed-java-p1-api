@@ -4,7 +4,8 @@ deployments:
     target: dev
     clusters: 1
     values:
-      image: <registryhost>/<owner>/<repository>
-      fqdn: newapp.contoso.com
+      image: ghcr.io/erikschlegel/coral-java-api-bigbang-test
+      tag: main
       port: 5000
-      replicas: 2
+      replicas: 1
+      chartTag: 0.0.10
