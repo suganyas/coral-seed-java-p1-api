@@ -1,22 +1,23 @@
-# See here for image contents: https://github.com/microsoft/vscode-dev-containers/tree/v0.192.0/containers/codespaces-linux/.devcontainer/base.Dockerfile
+# [Choice] Java version (use -bullseye variants on local arm64/Apple Silicon): 11, 17, 11-bullseye, 17-bullseye, 11-buster, 17-buster
+ARG VARIANT=11-bullseye
+FROM mcr.microsoft.com/vscode/devcontainers/java:${VARIANT}
 
-# there is a bug in the latest version 1.7.0 and can be tracked at https://github.com/microsoft/Oryx/issues/1199
-# temporary solution is to use Java 8 in pom.xml 
-FROM mcr.microsoft.com/vscode/devcontainers/universal:1-focal
+# [Option] Install Maven
+ARG INSTALL_MAVEN="false"
+ARG MAVEN_VERSION=""
+# [Option] Install Gradle
+ARG INSTALL_GRADLE="false"
+ARG GRADLE_VERSION=""
+RUN if [ "${INSTALL_MAVEN}" = "true" ]; then su vscode -c "umask 0002 && . /usr/local/sdkman/bin/sdkman-init.sh && sdk install maven \"${MAVEN_VERSION}\""; fi \
+    && if [ "${INSTALL_GRADLE}" = "true" ]; then su vscode -c "umask 0002 && . /usr/local/sdkman/bin/sdkman-init.sh && sdk install gradle \"${GRADLE_VERSION}\""; fi
 
-# ** [Optional] Uncomment this section to install additional packages. **
-USER root
+# [Choice] Node.js version: none, lts/*, 16, 14, 12, 10
+ARG NODE_VERSION="none"
+RUN if [ "${NODE_VERSION}" != "none" ]; then su vscode -c "umask 0002 && . /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSION} 2>&1"; fi
 
-RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-    && apt-get -y install --no-install-recommends python3.8-venv
+# [Optional] Uncomment this section to install additional OS packages.
+# RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+#     && apt-get -y install --no-install-recommends <your-package-list-here>
 
-RUN RELEASE=$(curl https://api.github.com/repos/k3d-io/k3d/releases/latest | jq -r .tag_name) \
-  && curl -L "https://github.com/k3d-io/k3d/releases/download/${RELEASE}/k3d-linux-amd64" -o /usr/local/bin/k3d \
-  && chmod +x /usr/local/bin/k3d
-
-RUN RELEASE=$(curl https://api.github.com/repos/vmware-tanzu/octant/releases/latest | jq -r .tag_name[1:]) \
-  && curl -LO "https://github.com/vmware-tanzu/octant/releases/download/v${RELEASE}/octant_${RELEASE}_Linux-64bit.tar.gz" \
-  && tar xvf "octant_${RELEASE}_Linux-64bit.tar.gz" \
-  && mv "./octant_${RELEASE}_Linux-64bit/octant" /usr/local/bin/octant
-
-USER codespace
+# [Optional] Uncomment this line to install global node packages.
+# RUN su vscode -c "source /usr/local/share/nvm/nvm.sh && npm install -g <your-package-here>" 2>&1

@@ -1,5 +1,6 @@
 {
     "java.configuration.updateBuildConfiguration": "automatic",
     "java.server.launchMode": "Standard",
-    "redhat.telemetry.enabled": false
+    "redhat.telemetry.enabled": false,
+    "java.compile.nullAnalysis.mode": "automatic"
 }
