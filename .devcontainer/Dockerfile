@@ -4,7 +4,7 @@ ARG VARIANT=11-bullseye
 FROM mcr.microsoft.com/devcontainers/java:${VARIANT}
 
 # [Option] Install Maven
-ARG INSTALL_MAVEN="true"
+ARG INSTALL_MAVEN="false"
 ARG MAVEN_VERSION=""
 # [Option] Install Gradle
 ARG INSTALL_GRADLE="false"
