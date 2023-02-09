@@ -1,28 +1,41 @@
 name: Java Container
-on: [push, pull_request]
+on: [ push, pull_request ]
 
-env: 
+env:
   CONTAINER_REGISTRY_URL: ${{ secrets.CONTAINER_REGISTRY_URL }}
   CONTAINER_REGISTRY_USER: ${{ secrets.CONTAINER_REGISTRY_USER }}
   CONTAINER_REGISTRY_ACCESS_TOKEN: ${{ secrets.CONTAINER_REGISTRY_ACCESS_TOKEN }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CONTAINER_IMAGE_NAME: ${{ github.repository }}
+  CLOUD_NAME: AzureCloud
+  IAC_SUFFIX: '${{ secrets.CLUSTER_NAME }}-${{ github.repository_owner }}'
 
 jobs:
-  docker-build-and-push:
+  check-secret:
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: read
-      packages: write
+
+    outputs:
+      my-key-exists: ${{ steps.my-key-check.outputs.defined }}
 
     steps:
-    
-    - uses: actions/checkout@v2
 
-    - name: Use Github Container Registry if no secrets are set
-      if: ${{ env.CONTAINER_REGISTRY_URL == '' }}
-      run: echo "CONTAINER_REGISTRY_URL=ghcr.io" >> $GITHUB_ENV && echo "CONTAINER_REGISTRY_ACCESS_TOKEN=$GITHUB_TOKEN" >> $GITHUB_ENV && echo "CONTAINER_REGISTRY_USER=\$GITHUB_USER" >> $GITHUB_ENV
+      - name: Check for Secret availability
+        id: my-key-check
+        # perform secret check & put boolean result as an output
+        shell: bash
+        run: |
+          if [ "${{ secrets.AZURE_CREDENTIALS }}" != '' ]; then
+            echo "defined=true" >> $GITHUB_OUTPUT;
+          else
+            echo "defined=false" >> $GITHUB_OUTPUT;
+          fi
+
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - uses: actions/checkout@v2
 
     - name: Set up JDK 17
       uses: actions/setup-java@v2
@@ -33,28 +46,133 @@ jobs:
     - name: Build and Test
       run: ./mvnw --batch-mode --update-snapshots verify
 
-    - name: Login to Container Registry
-      uses: docker/login-action@v1
-      with:
-        registry: ${{ env.CONTAINER_REGISTRY_URL }}
-        username: ${{ env.CONTAINER_REGISTRY_USER }}
-        password: ${{ env.CONTAINER_REGISTRY_ACCESS_TOKEN }}
+  push-gh:
+    runs-on: ubuntu-latest
+    needs: [ build , check-secret ]
+    if: needs.check-secret.outputs.my-key-exists != 'true'
 
-    - name: Docker metadata
-      id: meta
-      uses: docker/metadata-action@v3
-      with:
-        images: ${{ env.CONTAINER_REGISTRY_URL }}/${{ env.CONTAINER_IMAGE_NAME }}
-        tags: |
-          type=schedule
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
+    permissions:
+      contents: read
+      packages: write
 
-    - name: Build and push
-      uses: docker/build-push-action@v2
-      with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
+    steps:
+
+      - uses: actions/checkout@v2
+
+      - name: Use Github Container Registry if no secrets are set
+        if: ${{ env.CONTAINER_REGISTRY_URL == '' }}
+        run: echo "CONTAINER_REGISTRY_URL=ghcr.io" >> $GITHUB_ENV && echo "CONTAINER_REGISTRY_ACCESS_TOKEN=$GITHUB_TOKEN" >> $GITHUB_ENV && echo "CONTAINER_REGISTRY_USER=\$GITHUB_USER" >> $GITHUB_ENV
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ env.CONTAINER_REGISTRY_URL }}
+          username: ${{ env.CONTAINER_REGISTRY_USER }}
+          password: ${{ env.CONTAINER_REGISTRY_ACCESS_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: ${{ env.CONTAINER_REGISTRY_URL }}/${{ env.CONTAINER_IMAGE_NAME }}
+          tags: |
+            type=schedule
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  sign-push-acr:
+    runs-on: ubuntu-latest
+    needs: [ build, check-secret ]
+    if: needs.check-secret.outputs.my-key-exists == 'true'
+
+    services:
+      oci-registry:
+        image: ghcr.io/oras-project/registry@sha256:321aaa9de1049b3988a8cb7e4ae2043ec13df78bf140b5335b015823e9779da3 #v1.0.0-rc.4
+        ports:
+          - 5000:5000
+
+    steps:
+
+      - uses: actions/checkout@v2
+
+      - name: "Install notation"
+        run: |
+          curl -Lo notation.tar.gz https://github.com/notaryproject/notation/releases/download/v${NOTATION_VERSION}/notation_${NOTATION_VERSION}_linux_amd64.tar.gz
+          tar -zxf notation.tar.gz -C /usr/local/bin notation
+          rm -rf notation.tar.gz
+
+          curl -Lo notation-azure-kv.tar.gz https://github.com/Azure/notation-azure-kv/releases/download/v${AKV_PLUGIN_VERSION}/notation-azure-kv_${AKV_PLUGIN_VERSION}_Linux_amd64.tar.gz
+          mkdir -p ~/.config/notation/plugins/azure-kv
+          tar -zxf notation-azure-kv.tar.gz -C ~/.config/notation/plugins/azure-kv notation-azure-kv
+          rm notation-azure-kv.tar.gz
+        env:
+          NOTATION_VERSION: 1.0.0-rc.1
+          AKV_PLUGIN_VERSION: 0.5.0-rc.1
+
+      - name: "Install ORAS CLI"
+        uses: oras-project/setup-oras@main
+        with:
+          version: 0.16.0
+
+      - name: Login to Azure Cloud with CLI
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          environment: ${{ env.CLOUD_NAME }}
+
+      - name: downcase CONTAINER_IMAGE_NAME
+        run: echo "CONTAINER_IMAGE_NAME=${CONTAINER_IMAGE_NAME,,}" >>${GITHUB_ENV}
+
+      - name: "Build and push image to local registry"
+        id: BuildAndPush
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker build -t $IMAGE_TAG .
+          docker push $IMAGE_TAG
+
+          IMAGE_PATH=$(docker image inspect --format='{{index .RepoDigests 0}}' $IMAGE_TAG)
+          IMAGE_DIGEST=$(echo $IMAGE_PATH | cut -d'@' -f2)
+
+          echo "IMAGE_PATH=$IMAGE_PATH" >> $GITHUB_ENV
+          echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
+        env:
+          IMAGE_TAG: localhost:5000/${{ env.CONTAINER_IMAGE_NAME }}:${{ github.sha }}
+
+      - name: downcase IAC_SUFFIX
+        run: echo "IAC_SUFFIX=${IAC_SUFFIX,,}" >>${GITHUB_ENV}
+
+      - name: downcase KEYVAULT_NAME
+        run: |
+          KEYVAULT_NAME="vault-${IAC_SUFFIX}"
+          KEYVAULT_SUBSTR=${KEYVAULT_NAME:0:23}
+          echo "Val: $KEYVAULT_SUBSTR"
+          echo "KEYVAULT_NAME=${KEYVAULT_SUBSTR,,}" >>${GITHUB_ENV}
+
+      - name: "Add notation key"
+        run: |
+          SIGNING_KEY_ID=$(az keyvault certificate show -n notary-cert --vault-name ${{ env.KEYVAULT_NAME }} --query "kid" -o tsv)
+          notation key add default --id $SIGNING_KEY_ID --plugin azure-kv
+
+      - name: "Sign container image"
+        run: notation sign --signature-format cose --key default $IMAGE_PATH
+
+      - name: "Login to ACR"
+        if: github.ref == 'refs/heads/main'
+        run: az acr login --name $CONTAINER_REGISTRY_URL
+
+      - name: Set image tag
+        id: vars
+        run: echo "tag=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
+
+      - name: "Copy to ACR"
+        if: github.ref == 'refs/heads/main'
+        run: oras copy $IMAGE_PATH $CONTAINER_REGISTRY_URL.azurecr.io/${{ env.CONTAINER_IMAGE_NAME }}:${{ steps.vars.outputs.tag }} --recursive
